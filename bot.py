@@ -1,15 +1,10 @@
-"""
-Telegram-бот для мониторинга доступности билетов в кинотеатре Луч (Красноярск).
-Отправляет уведомления мгновенно по каждому сеансу и выдерживает паузу после
-завершения всей очереди запросов.
-"""
-
 import asyncio
 import logging
 import random
 import re
 from dataclasses import dataclass
 from datetime import datetime
+import pytz
 from typing import Optional, Set
 
 import aiohttp
@@ -29,9 +24,6 @@ from config import (
     MAX_DELAY,
 )
 
-# ──────────────────────────────────────────────
-# Логирование
-# ──────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
@@ -42,16 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("kinoluch_bot")
 
-
-# ──────────────────────────────────────────────
-# Глобальное состояние подписок
-# ──────────────────────────────────────────────
 active_subscribers: Set[str] = set(INITIAL_SUBSCRIBERS)
 
-
-# ──────────────────────────────────────────────
-# Модели данных
-# ──────────────────────────────────────────────
 @dataclass
 class SeanceInfo:
     url: str
@@ -62,10 +46,6 @@ class SeanceInfo:
     last_status: Optional[bool] = None   # None = ещё не проверяли
     last_checked: Optional[datetime] = None  # Время последней проверки запросом
 
-
-# ──────────────────────────────────────────────
-# Парсер страницы сеанса
-# ──────────────────────────────────────────────
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -84,7 +64,6 @@ BASE_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
     "Referer": "https://krsk.kinoluch.ru/poster",
 }
-
 
 def parse_seance_page(html: str, url: str) -> SeanceInfo:
     """Извлекает информацию о сеансе и проверяет доступность билетов."""
@@ -114,10 +93,6 @@ def parse_seance_page(html: str, url: str) -> SeanceInfo:
 
     return info
 
-
-# ──────────────────────────────────────────────
-# HTTP-клиент
-# ──────────────────────────────────────────────
 async def fetch_page(session: aiohttp.ClientSession, url: str) -> Optional[str]:
     headers = {**BASE_HEADERS, "User-Agent": random.choice(USER_AGENTS)}
     try:
@@ -136,10 +111,6 @@ async def fetch_page(session: aiohttp.ClientSession, url: str) -> Optional[str]:
         logger.warning("Сетевая ошибка %s: %s", url, e)
     return None
 
-
-# ──────────────────────────────────────────────
-# Уведомления
-# ──────────────────────────────────────────────
 NOTIFY_TEMPLATE = (
     "🎟 *Билеты открыты\\!*\n\n"
     "🎬 *Фильм:* {title}\n"
@@ -147,7 +118,6 @@ NOTIFY_TEMPLATE = (
     "🎭 *Зал:* {hall}\n"
     "🔗 [Купить билет]({url})"
 )
-
 
 def _escape(text: str) -> str:
     """Экранирует спецсимволы для MarkdownV2."""
@@ -179,10 +149,6 @@ async def send_notification(bot: Bot, info: SeanceInfo) -> None:
         except TelegramError as e:
             logger.error("Ошибка отправки уведомления пользователю %s: %s", chat_id, e)
 
-
-# ──────────────────────────────────────────────
-# Основной цикл мониторинга
-# ──────────────────────────────────────────────
 async def check_all_seances(
     session: aiohttp.ClientSession,
     bot: Bot,
@@ -190,11 +156,12 @@ async def check_all_seances(
 ) -> None:
     """Последовательно проверяет сеансы и отправляет уведомления сразу при обнаружении доступности."""
     for seance in seances:
-        # Пауза перед каждым запросом для защиты от блокировок
         await asyncio.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
         html = await fetch_page(session, seance.url)
-        seance.last_checked = datetime.now()
+        
+        tz_krsk = pytz.timezone('Asia/Krasnoyarsk')
+        seance.last_checked = datetime.now(tz_krsk)
 
         if html is None:
             continue
@@ -217,7 +184,6 @@ async def check_all_seances(
             seance.seance_datetime,
         )
 
-        # Отправляем уведомление немедленно, если сеанс открыт для продажи
         if updated.available:
             await send_notification(bot, seance)
 
@@ -227,27 +193,18 @@ async def _background_monitor(bot: Bot, seances: list[SeanceInfo]) -> None:
     async with aiohttp.ClientSession(connector=connector) as session:
         while True:
             try:
-                # Запуск проверки всей очереди сеансов
                 await check_all_seances(session, bot, seances)
             except Exception as e:
                 logger.exception("Ошибка в цикле мониторинга: %s", e)
             
-            # Минутная пауза начинается строго после обработки последней ссылки в очереди
             logger.info("Все сеансы проверены. Следующий запуск очереди через %d сек.", CHECK_INTERVAL)
             await asyncio.sleep(CHECK_INTERVAL)
 
-
-# ──────────────────────────────────────────────
-# Telegram-команды
-# ──────────────────────────────────────────────
 HELP_TEXT = (
-    "👋 *Кинотеатр Луч — мониторинг билетов*\n\n"
-    "Бот проверяет доступность билетов мгновенно по ходу очереди\\.\n\n"
-    "*Команды:*\n"
     "/on — 🔔 включить уведомления для текущего чата\n"
     "/off — 🔕 отключить уведомления для текущего чата\n"
     "/status — 📋 текущий статус всех сеансов\n"
-    "/start — эта справка"
+    "/start"
 )
 
 
@@ -305,10 +262,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         disable_web_page_preview=True,
     )
 
-
-# ──────────────────────────────────────────────
-# Точка входа
-# ──────────────────────────────────────────────
 async def post_init(application: Application) -> None:
     """Выполняет настройку меню команд и запускает фоновый мониторинг."""
     commands = [
@@ -323,7 +276,6 @@ async def post_init(application: Application) -> None:
     seances = [SeanceInfo(url=url) for url in SEANCE_URLS]
     application.bot_data["seances"] = seances
     asyncio.create_task(_background_monitor(application.bot, seances))
-
 
 def main() -> None:
     app = (
