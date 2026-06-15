@@ -36,6 +36,7 @@ MAX_DELAY = 4.0   # максимум секунд
 # Добавляйте/удаляйте строки по необходимости
 # ──────────────────────────────────────────────
 SEANCE_URLS = [
+    "https://krsk.kinoluch.ru/poster/seance/196991",
     "https://krsk.kinoluch.ru/poster/seance/196909",
     "https://krsk.kinoluch.ru/poster/seance/196913",
     "https://krsk.kinoluch.ru/poster/seance/196917",
